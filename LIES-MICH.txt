@@ -1,0 +1,51 @@
+TEAMLAGE OFFLINE – EINRICHTUNG (WINDOWS)
+=========================================
+
+1) ERSTER START
+   Doppelklick auf "Teamlage starten.bat".
+   Es öffnet sich ein Fenster OHNE Adressleiste und OHNE Tabs – sieht aus
+   wie ein eigenständiges Programm. Im Hintergrund läuft dafür ein winziger
+   lokaler Server (server.ps1), der nur auf diesem PC erreichbar ist
+   (http://localhost:8420) – keine Daten verlassen den Rechner an dieser Stelle.
+
+2) ICON AUF DEM DESKTOP ANLEGEN
+   - Rechtsklick auf "Teamlage starten.bat" → "Senden an" → "Desktop
+     (Verknüpfung erstellen)"
+   - Die neue Verknüpfung auf dem Desktop umbenennen, z. B. "Teamlage"
+   - Rechtsklick auf die Verknüpfung → Eigenschaften → "Anderes Symbol" /
+     "Change Icon" → "icon.ico" aus diesem Ordner auswählen → OK
+   Ab jetzt: Doppelklick auf das Desktop-Icon öffnet die App direkt im
+   App-Fenster, ganz ohne sichtbaren Browser-Rahmen.
+
+3) LIVE-KARTE VS. EIGENES BILD
+   Oben in der Kartenansicht gibt es zwei Reiter:
+   - "Eigenes Bild": funktioniert 100% offline, keine Internetverbindung
+     nötig, wie bisher (eigenes Foto/Lageplan hochladen).
+   - "Live-Karte": lädt echtes Kartenmaterial von OpenStreetMap.
+     - Muss beim ALLERERSTEN Mal online geöffnet werden (lädt Kartenkacheln
+       und die Kartenbibliothek).
+     - Danach bleiben bereits angesehene Kartenausschnitte auch OHNE
+       Internet nutzbar (werden automatisch zwischengespeichert).
+     - Neue, nie zuvor angesehene Bereiche brauchen wieder Internet, um
+       nachgeladen zu werden – das ist bei jeder Offline-Kartenlösung so.
+     - Ortssuche und "Mein Standort" benötigen ebenfalls eine
+       Internetverbindung bzw. GPS.
+
+4) DATENSICHERUNG
+   Alle Teams, Timer und Positionen liegen lokal im Browser-Speicher dieses
+   PCs. Über "Vollsicherung exportieren" (unten in der Kartenansicht) kannst
+   du jederzeit eine JSON-Datei mit allem sichern und über "Sicherung
+   einspielen" wiederherstellen – auch auf einem anderen PC.
+
+5) AUTOSTART DES SERVERS (OPTIONAL)
+   Falls der Server dauerhaft im Hintergrund laufen soll (z. B. für
+   automatischen Start mit Windows), kann "server.ps1" zusätzlich in den
+   Windows-Autostart-Ordner (Verknüpfung) gelegt werden. Für den normalen
+   Gebrauch reicht es, einfach jedes Mal auf das Desktop-Icon zu klicken.
+
+HINWEIS ZUR LIVE-KARTE
+   Die Live-Karte nutzt öffentliche OpenStreetMap-Server. Für seltene,
+   private Nutzung (einzelne Übungen/Einsätze) ist das unproblematisch. Bei
+   sehr intensiver/dauerhafter Nutzung durch viele Geräte gleichzeitig
+   solltet ihr einen eigenen Kartenserver oder einen kommerziellen
+   Kartenanbieter in Betracht ziehen.

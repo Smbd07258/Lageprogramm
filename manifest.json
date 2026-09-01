@@ -1,0 +1,26 @@
+{
+  "name": "Teamlage Offline",
+  "short_name": "Teamlage",
+  "description": "Offline-fähiges taktisches Lageboard: Teams verwalten, Timer stellen und auf einer Geländekarte positionieren – ohne Internetverbindung, alle Daten bleiben auf dem Gerät.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#08110f",
+  "theme_color": "#08110f",
+  "lang": "de",
+  "icons": [
+    {
+      "src": "icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}

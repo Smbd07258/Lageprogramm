@@ -1,0 +1,2788 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Teamlage">
+  <meta name="theme-color" content="#08110f">
+  <meta name="description" content="Taktisches Lageboard für Team-Status, Timer und Kartenmarkierungen. Läuft mit eigenem Geländeplan komplett offline, oder mit Live-Karte (OpenStreetMap) wenn online – und danach weiter mit den zuletzt geladenen Kartenausschnitten offline.">
+  <title>Teamlage Offline</title>
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+  <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <!-- Leaflet wird nur für den optionalen Live-Karten-Modus geladen (OpenStreetMap-Kacheln).
+       Beim ersten Online-Aufruf lädt der Service Worker diese Dateien in den Cache,
+       danach funktioniert auch dieser Teil ohne Internetverbindung. Der Modus
+       "Eigenes Bild" benötigt zu keinem Zeitpunkt eine Internetverbindung. -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <style>/* Vollstaendig lokal ausser Live-Karten-Modus (siehe Kommentar oben). */
+
+:root {
+  --ink: #eaf3ef;
+  --muted: #95aaa2;
+  --muted-2: #6f837c;
+  --line: rgba(221, 239, 232, 0.12);
+  --line-strong: rgba(221, 239, 232, 0.2);
+  --accent: #8dd0aa;
+  --accent-strong: #b8eccd;
+  --danger: #ff806c;
+  --warning: #e9b949;
+}
+
+* { box-sizing: border-box; }
+
+html,
+body {
+  min-height: 100%;
+  margin: 0;
+  background: #08110f;
+  color: var(--ink);
+  font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif;
+}
+
+button,
+input,
+textarea { font: inherit; }
+button { color: inherit; }
+button, .map-team { -webkit-tap-highlight-color: transparent; }
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--accent-strong);
+  outline-offset: 3px;
+}
+
+.app-shell {
+  height: 100dvh;
+  min-height: 620px;
+  overflow: hidden;
+  background: radial-gradient(circle at 50% -20%, rgba(77, 132, 106, 0.18), transparent 42%), #08110f;
+}
+
+.topbar {
+  height: 82px;
+  display: grid;
+  grid-template-columns: minmax(230px, 0.8fr) minmax(480px, 1.5fr) minmax(230px, 0.8fr);
+  align-items: center;
+  gap: 22px;
+  padding: 11px 18px;
+  border-bottom: 1px solid var(--line);
+  background: rgba(9, 19, 16, 0.96);
+  position: relative;
+  z-index: 30;
+  transition: background 180ms ease, box-shadow 180ms ease;
+}
+
+.topbar.timer-due {
+  background: #351410;
+  box-shadow: inset 0 -3px 0 #ff765f;
+  animation: duePulse 1.15s ease-in-out infinite;
+}
+
+@keyframes duePulse {
+  50% { box-shadow: inset 0 -3px 0 #ff765f, 0 0 34px rgba(255, 91, 68, 0.24); }
+}
+
+.brand-block,
+.top-actions,
+.timer-strip,
+.timer-actions,
+.toolbar-group,
+.map-footer,
+.footer-actions,
+.selected-title,
+.modal-heading,
+.modal-actions {
+  display: flex;
+  align-items: center;
+}
+
+.brand-block { min-width: 0; gap: 12px; }
+
+.brand-mark {
+  width: 44px;
+  height: 44px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(184, 236, 205, 0.3);
+  border-radius: 13px;
+  background: linear-gradient(145deg, #254539, #162923);
+  color: var(--accent-strong);
+  font-size: 13px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  box-shadow: inset 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.brand-copy { min-width: 0; }
+
+.brand-copy label,
+.eyebrow {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--muted-2);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.17em;
+  text-transform: uppercase;
+}
+
+.brand-copy input,
+.location-control input {
+  width: 100%;
+  border: 0;
+  outline: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--ink);
+  font-weight: 760;
+}
+
+.brand-copy input { font-size: 18px; text-overflow: ellipsis; }
+
+.timer-strip {
+  justify-self: center;
+  width: min(100%, 650px);
+  justify-content: center;
+  gap: 13px;
+}
+
+.timer-label {
+  display: block;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.timer-team {
+  min-width: 118px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.timer-team-avatar {
+  width: 35px;
+  height: 35px;
+  flex: 0 0 auto;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: #102019;
+  font-size: 10px;
+  font-weight: 950;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.25);
+}
+
+.timer-team-copy { min-width: 0; }
+.timer-team-copy small,
+.timer-team-copy strong { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.timer-team-copy small { color: var(--muted-2); font-size: 8px; font-weight: 800; text-transform: uppercase; letter-spacing: .1em; }
+.timer-team-copy strong { max-width: 105px; margin-top: 2px; font-size: 11px; }
+
+.timer-readout {
+  min-width: 134px;
+  padding-left: 17px;
+  border-left: 1px solid var(--line-strong);
+}
+
+.timer-readout strong {
+  display: block;
+  font-variant-numeric: tabular-nums;
+  font-size: 28px;
+  line-height: 1.04;
+  letter-spacing: 0.03em;
+}
+
+.timer-due .timer-readout strong,
+.timer-due .timer-label { color: #ffd4cc; }
+.timer-readout.due strong { color: #ff9b89; }
+.timer-readout.warning strong { color: #f4c85e; }
+.timer-actions { gap: 7px; }
+.running-timers {
+  padding: 5px 7px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--muted-2);
+  font-size: 8px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+.timer-empty { color: var(--muted); font-size: 11px; }
+.top-actions { justify-content: flex-end; gap: 9px; }
+.save-pill { white-space: nowrap; color: var(--muted); font-size: 10px; }
+.save-pill.saved { color: var(--accent); }
+.save-pill.local { color: var(--warning); }
+.save-pill.error { color: var(--danger); }
+.save-pill.saving { color: var(--warning); }
+
+.offline-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 7px;
+  border: 1px solid rgba(141, 208, 170, 0.26);
+  border-radius: 7px;
+  color: var(--accent);
+  font-size: 8px;
+  font-weight: 850;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.button,
+.icon-button,
+.tool-button,
+.text-button,
+.round-add,
+.team-card,
+.status-grid button,
+.timer-mode-switch button,
+.duration-row button,
+.warning-row button,
+.timer-action,
+.modal-close,
+.color-row button { border: 0; cursor: pointer; }
+
+.button {
+  min-height: 38px;
+  padding: 0 15px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.button.primary {
+  color: #0c241a;
+  background: var(--accent-strong);
+  box-shadow: 0 6px 18px rgba(84, 181, 125, 0.2);
+}
+
+.button.ghost {
+  border: 1px dashed var(--line-strong);
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--muted);
+}
+
+.button.full { width: 100%; }
+.alarm-button { min-width: 122px; background: #ff765f; color: #2a0b07; }
+
+.icon-button {
+  min-width: 36px;
+  min-height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+.icon-button.wide { min-width: auto; }
+
+.workspace {
+  height: calc(100dvh - 82px);
+  min-height: 538px;
+  display: grid;
+  grid-template-columns: 292px minmax(0, 1fr);
+  transition: grid-template-columns 220ms ease;
+}
+
+.focus-mode .workspace { grid-template-columns: 0 minmax(0, 1fr); }
+.focus-mode .side-panel { transform: translateX(-100%); opacity: 0; }
+
+.side-panel {
+  min-width: 0;
+  overflow-y: auto;
+  border-right: 1px solid var(--line);
+  background: #0d1916;
+  transition: transform 220ms ease, opacity 180ms ease;
+  scrollbar-width: thin;
+  scrollbar-color: #385049 transparent;
+}
+
+.panel-section { padding: 18px; border-bottom: 1px solid var(--line); }
+
+.section-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 13px;
+}
+
+.section-heading h2,
+.selected-title h3,
+.modal-heading h2 { margin: 0; font-size: 17px; letter-spacing: -0.02em; }
+
+.round-add {
+  width: 36px;
+  height: 36px;
+  border-radius: 11px;
+  background: var(--accent-strong);
+  color: #0b2018;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.team-list { display: flex; flex-direction: column; gap: 7px; margin-bottom: 10px; }
+
+.team-card {
+  width: 100%;
+  min-height: 56px;
+  display: grid;
+  grid-template-columns: 38px minmax(0, 1fr) 62px;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 11px 7px 7px;
+  border: 1px solid transparent;
+  border-radius: 13px;
+  background: transparent;
+  text-align: left;
+}
+
+.team-card.selected {
+  border-color: var(--line-strong);
+  background: rgba(218, 240, 231, 0.07);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.team-avatar {
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  color: #102019;
+  font-size: 11px;
+  font-weight: 950;
+  letter-spacing: 0.04em;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.24);
+}
+
+.team-card-copy { min-width: 0; }
+.team-card-copy strong, .team-card-copy small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.team-card-copy strong { font-size: 12px; }
+.team-card-copy small { margin-top: 3px; color: var(--muted); font-size: 10px; }
+
+.team-card-side {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+}
+
+.team-timer-chip {
+  max-width: 62px;
+  overflow: hidden;
+  color: var(--muted-2);
+  font-size: 9px;
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.team-timer-chip.running { color: var(--accent-strong); }
+.team-timer-chip.warning { color: #f4c85e; }
+.team-timer-chip.due { color: var(--danger); }
+
+.status-dot, .mini-dot { display: inline-block; border-radius: 99px; }
+.status-dot { width: 8px; height: 8px; }
+.mini-dot { width: 7px; height: 7px; flex: 0 0 auto; }
+.status-ready { background: #7ee0a8 !important; }
+.status-moving { background: #67b8e9 !important; }
+.status-onsite { background: #f0bd4f !important; }
+.status-paused { background: #7e8d87 !important; }
+
+.selected-title { justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+
+.text-button {
+  padding: 4px 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 750;
+}
+.text-button.danger { color: var(--danger); }
+
+.status-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+
+.status-grid button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 33px;
+  padding: 0 9px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.025);
+  color: var(--muted);
+  font-size: 10px;
+  text-align: left;
+}
+
+.status-grid button.active {
+  border-color: rgba(184, 236, 205, 0.42);
+  background: rgba(141, 208, 170, 0.1);
+  color: var(--ink);
+}
+
+.team-timer-panel {
+  margin-top: 12px;
+  padding: 11px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: rgba(0,0,0,.12);
+}
+
+.team-timer-panel.due {
+  border-color: rgba(255, 128, 108, .48);
+  box-shadow: inset 0 0 0 1px rgba(255, 128, 108, .07);
+}
+
+.team-timer-panel.warning {
+  border-color: rgba(233, 185, 73, .42);
+  box-shadow: inset 0 0 0 1px rgba(233, 185, 73, .06);
+}
+
+.team-timer-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: .09em;
+}
+.team-timer-heading b { color: var(--accent); font-size: 8px; }
+.team-timer-panel.warning .team-timer-heading b { color: #f4c85e; }
+.team-timer-panel.due .team-timer-heading b { color: var(--danger); }
+
+.timer-mode-switch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
+  padding: 3px;
+  border-radius: 9px;
+  background: rgba(255,255,255,.035);
+}
+
+.timer-mode-switch button {
+  min-height: 30px;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 750;
+}
+.timer-mode-switch button span { margin-right: 3px; }
+.timer-mode-switch button.active { background: rgba(141,208,170,.14); color: var(--accent-strong); }
+
+.team-timer-readout {
+  padding: 11px 0 9px;
+  color: var(--ink);
+  font-size: 28px;
+  font-weight: 780;
+  line-height: 1;
+  letter-spacing: .04em;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.team-timer-panel.due .team-timer-readout { color: var(--danger); }
+
+.duration-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.duration-row > span { margin-right: auto; color: var(--muted-2); font-size: 8px; text-transform: uppercase; font-weight: 800; }
+.duration-row button {
+  min-height: 25px;
+  padding: 0 6px;
+  border-radius: 6px;
+  background: rgba(255,255,255,.04);
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 750;
+}
+.duration-row button.active { background: rgba(141,208,170,.14); color: var(--accent-strong); }
+.duration-row label {
+  height: 25px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--muted-2);
+  font-size: 8px;
+}
+.duration-row input {
+  width: 28px;
+  border: 0;
+  outline: 0;
+  padding: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 9px;
+  text-align: center;
+}
+
+.warning-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin: -1px 0 8px;
+  padding-top: 7px;
+  border-top: 1px solid var(--line);
+}
+.warning-row > span { margin-right: auto; color: var(--muted-2); font-size: 8px; font-weight: 800; }
+.warning-row button {
+  min-height: 25px;
+  padding: 0 7px;
+  border-radius: 6px;
+  background: rgba(255,255,255,.04);
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 750;
+}
+.warning-row button.active { background: rgba(233,185,73,.16); color: #f4c85e; }
+
+.team-timer-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+.timer-action {
+  min-height: 31px;
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: 800;
+}
+.timer-action.start { background: var(--accent-strong); color: #0c241a; }
+.timer-action.pause { background: #e9b949; color: #261b04; }
+.timer-action.reset { border: 1px solid var(--line); background: rgba(255,255,255,.035); color: var(--muted); }
+
+.marker-settings {
+  margin-top: 9px;
+  padding: 10px 11px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: rgba(255,255,255,.018);
+}
+.marker-settings > div { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 9px; font-weight: 750; }
+.marker-settings > div b { color: var(--accent-strong); font-size: 9px; font-variant-numeric: tabular-nums; }
+.marker-settings label { display: grid; grid-template-columns: 12px minmax(0,1fr) 16px; align-items: center; gap: 7px; margin-top: 8px; color: var(--muted-2); }
+.marker-settings small { font-size: 8px; }
+.marker-settings strong { font-size: 15px; }
+.marker-settings input { width: 100%; accent-color: var(--accent); }
+
+.team-note {
+  margin: 11px 0 0;
+  padding: 9px 10px;
+  border-left: 2px solid var(--accent);
+  background: rgba(141, 208, 170, 0.06);
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.history-list { list-style: none; margin: 0; padding: 0; }
+.history-list li {
+  display: grid;
+  grid-template-columns: 39px minmax(0, 1fr);
+  gap: 9px;
+  padding: 6px 0;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+.history-list time { color: var(--muted-2); font-variant-numeric: tabular-nums; }
+
+.map-stage {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: 54px minmax(0, 1fr) 34px;
+  padding: 0 14px;
+  background: #121f1b;
+}
+
+.map-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.location-control { display: flex; align-items: center; min-width: 180px; max-width: 340px; gap: 7px; }
+.location-pin { color: var(--accent); }
+.location-control input { font-size: 12px; }
+.toolbar-group { gap: 6px; }
+
+.tool-button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.035);
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 750;
+}
+.tool-button.active { border-color: rgba(141, 208, 170, 0.4); color: var(--accent-strong); }
+.tool-button.accent { background: var(--accent-strong); color: #102019; }
+
+.map-canvas {
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(217, 236, 227, 0.16);
+  border-radius: 18px;
+  background: radial-gradient(circle at 76% 18%, rgba(101, 142, 124, 0.18), transparent 25%), radial-gradient(circle at 25% 75%, rgba(55, 90, 75, 0.24), transparent 28%), #22332d;
+  box-shadow: 0 20px 55px rgba(0, 0, 0, 0.27), inset 0 1px rgba(255, 255, 255, 0.03);
+  touch-action: none;
+  user-select: none;
+}
+
+.map-canvas.with-grid::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  background-image: linear-gradient(rgba(218, 239, 229, 0.07) 1px, transparent 1px), linear-gradient(90deg, rgba(218, 239, 229, 0.07) 1px, transparent 1px);
+  background-size: 8.333% 10%;
+  mask-image: linear-gradient(to bottom, rgba(0,0,0,.85), rgba(0,0,0,.42));
+}
+
+.map-background {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  filter: saturate(0.72) contrast(1.08) brightness(0.73);
+}
+.map-background.fit-cover { object-fit: cover; }
+.map-background.fit-contain { object-fit: contain; background: #17221f; }
+
+.map-mode-switch { display: flex; gap: 4px; padding: 3px; border-radius: 9px; background: rgba(255,255,255,.035); }
+.map-mode-switch button {
+  min-height: 30px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 750;
+  cursor: pointer;
+}
+.map-mode-switch button.active { background: rgba(141,208,170,.16); color: var(--accent-strong); }
+
+.location-search { display: flex; align-items: center; gap: 6px; min-width: 150px; max-width: 260px; flex: 1 1 auto; }
+.location-search input {
+  width: 100%;
+  height: 30px;
+  border: 1px solid var(--line);
+  outline: 0;
+  border-radius: 8px;
+  padding: 0 9px;
+  background: rgba(255,255,255,.035);
+  color: var(--ink);
+  font-size: 10px;
+}
+.location-search input:focus { border-color: rgba(141,208,170,.5); }
+
+.leaflet-host { position: absolute; inset: 0; z-index: 1; background: #17221f; }
+.leaflet-host .leaflet-tile-pane { filter: saturate(0.75) contrast(1.05) brightness(0.82); }
+.leaflet-host .leaflet-control-attribution {
+  background: rgba(8, 18, 15, 0.72) !important;
+  color: var(--muted) !important;
+  font-size: 9px !important;
+}
+.leaflet-host .leaflet-control-attribution a { color: var(--accent) !important; }
+.leaflet-host .leaflet-control-zoom a {
+  background: rgba(8, 18, 15, 0.82) !important;
+  color: var(--ink) !important;
+  border-color: rgba(220, 238, 230, 0.16) !important;
+}
+
+.tl-marker-icon { background: transparent; border: 0; }
+
+.map-live-banner {
+  position: absolute;
+  left: 50%;
+  top: 14px;
+  z-index: 9;
+  transform: translateX(-50%);
+  padding: 7px 12px;
+  border: 1px solid rgba(233, 185, 73, .4);
+  border-radius: 9px;
+  background: rgba(41, 31, 8, .88);
+  color: #f7d67e;
+  font-size: 9px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.empty-map {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 5;
+  width: min(390px, 80%);
+  transform: translate(-50%, -50%);
+  padding: 30px;
+  border: 1px dashed rgba(184, 236, 205, 0.28);
+  border-radius: 18px;
+  background: rgba(13, 27, 22, 0.72);
+  backdrop-filter: blur(10px);
+  text-align: center;
+}
+
+.empty-map-symbol {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto 12px;
+  border-radius: 14px;
+  background: rgba(141, 208, 170, 0.12);
+  color: var(--accent-strong);
+  font-size: 27px;
+}
+.empty-map strong { display: block; font-size: 16px; }
+.empty-map p { margin: 7px auto 16px; color: var(--muted); font-size: 11px; line-height: 1.55; }
+
+.storage-warning {
+  position: absolute;
+  z-index: 30;
+  right: 14px;
+  bottom: 14px;
+  max-width: 320px;
+  padding: 10px 12px;
+  border: 1px solid rgba(233, 185, 73, .5);
+  border-radius: 10px;
+  background: rgba(41, 31, 8, .94);
+  color: #f7d67e;
+  font-size: 9px;
+  line-height: 1.45;
+}
+
+.north-arrow {
+  position: absolute;
+  top: 17px;
+  right: 17px;
+  z-index: 7;
+  width: 34px;
+  height: 52px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: rgba(239, 248, 244, 0.75);
+  font-size: 10px;
+  font-weight: 900;
+}
+.north-arrow i { width: 0; height: 0; margin-top: 4px; border-left: 8px solid transparent; border-right: 8px solid transparent; border-bottom: 25px solid rgba(239, 248, 244, 0.72); }
+
+.map-team {
+  position: absolute;
+  z-index: 10;
+  transform: translate(-25px, -29px);
+  width: auto;
+  min-width: 50px;
+  min-height: 58px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: grab;
+  touch-action: none;
+}
+.map-team:active { cursor: grabbing; }
+
+.marker-pin {
+  position: relative;
+  z-index: 2;
+  width: 50px;
+  height: 50px;
+  display: grid;
+  place-items: center;
+  border: 3px solid rgba(9, 22, 17, 0.8);
+  border-radius: 17px 17px 17px 5px;
+  transform: rotate(-45deg);
+  color: #0f211a;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.28), 0 8px 18px rgba(0, 0, 0, 0.34);
+}
+.marker-pin b { transform: rotate(45deg); font-size: 12px; font-weight: 950; letter-spacing: 0.03em; }
+
+.marker-pin i {
+  position: absolute;
+  top: -6px;
+  right: -6px;
+  width: 19px;
+  height: 19px;
+  display: grid;
+  place-items: center;
+  border: 2px solid #14221e;
+  border-radius: 99px;
+  transform: rotate(45deg);
+  color: #102019;
+  font-size: 8px;
+  font-style: normal;
+  font-weight: 950;
+}
+
+.marker-shadow { position: absolute; left: 12px; top: 43px; width: 28px; height: 9px; border-radius: 50%; background: rgba(0, 0, 0, 0.38); filter: blur(3px); }
+
+.marker-timer {
+  position: absolute;
+  left: 58px;
+  top: -1px;
+  z-index: 3;
+  min-width: 120px;
+  padding: 6px 9px 7px;
+  border: 1px solid rgba(220, 238, 230, 0.17);
+  border-radius: 10px;
+  background: rgba(6, 15, 12, 0.9);
+  backdrop-filter: blur(7px);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.3);
+  text-align: left;
+  white-space: nowrap;
+  pointer-events: none;
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.marker-timer.align-left { left: auto; right: 58px; text-align: right; }
+.marker-timer small,
+.marker-timer strong,
+.marker-timer em { display: block; }
+.marker-timer small {
+  max-width: 130px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 8px;
+  font-weight: 760;
+  text-overflow: ellipsis;
+}
+.marker-timer strong {
+  margin-top: 1px;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 880;
+  letter-spacing: .035em;
+  font-variant-numeric: tabular-nums;
+}
+.marker-timer strong b { color: var(--accent); font-size: 11px; }
+.marker-timer em { margin-top: 1px; color: var(--muted-2); font-size: 7px; font-style: normal; }
+
+.map-team.selected { z-index: 14; }
+.map-team.selected .marker-pin { outline: 2px solid rgba(255,255,255,.75); outline-offset: 2px; }
+
+.map-team.timer-warning .marker-pin {
+  outline: 3px solid rgba(244, 200, 94, .7);
+  outline-offset: 4px;
+  animation: markerWarningPulse 1.15s ease-in-out infinite;
+}
+.map-team.timer-warning .marker-timer {
+  border-color: rgba(244, 200, 94, .68);
+  background: rgba(39, 31, 9, .92);
+  animation: timerBadgePulse 1.15s ease-in-out infinite;
+}
+.map-team.timer-warning .marker-timer strong,
+.map-team.timer-warning .marker-timer em { color: #f7d67e; }
+
+.map-team.timer-expired .marker-pin {
+  outline: 3px solid rgba(255, 128, 108, .75);
+  outline-offset: 4px;
+}
+.map-team.timer-expired .marker-timer {
+  border-color: rgba(255, 128, 108, .72);
+  background: rgba(49, 14, 10, .94);
+}
+.map-team.timer-expired .marker-timer strong,
+.map-team.timer-expired .marker-timer em { color: #ff9d8d; }
+
+@keyframes markerWarningPulse {
+  50% {
+    outline-color: rgba(244, 200, 94, .16);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.28), 0 0 0 11px rgba(244, 200, 94, .08), 0 8px 18px rgba(0,0,0,.34);
+  }
+}
+
+@keyframes timerBadgePulse {
+  50% { border-color: rgba(244, 200, 94, .28); }
+}
+
+.map-legend {
+  position: absolute;
+  left: 14px;
+  bottom: 13px;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 7px 9px;
+  border: 1px solid rgba(220, 238, 230, 0.12);
+  border-radius: 8px;
+  background: rgba(8, 18, 15, 0.72);
+  color: var(--muted);
+  font-size: 8px;
+  backdrop-filter: blur(6px);
+}
+.map-legend span { display: flex; align-items: center; gap: 5px; }
+
+.map-footer { justify-content: space-between; color: var(--muted-2); font-size: 9px; }
+.live-indicator { display: inline-block; width: 6px; height: 6px; margin-right: 6px; border-radius: 50%; background: #62d89b; box-shadow: 0 0 0 4px rgba(98, 216, 155, 0.09); }
+.footer-actions { gap: 12px; }
+
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(3, 10, 8, 0.72);
+  backdrop-filter: blur(5px);
+}
+
+.team-editor, .history-modal {
+  width: min(520px, 96vw);
+  max-height: min(760px, 92dvh);
+  overflow-y: auto;
+  padding: 23px;
+  border: 1px solid var(--line-strong);
+  border-radius: 20px;
+  background: #14231f;
+  box-shadow: 0 32px 90px rgba(0, 0, 0, 0.52);
+}
+.history-modal { width: min(560px, 96vw); }
+.modal-heading { justify-content: space-between; margin-bottom: 20px; }
+.modal-heading h2 { font-size: 22px; }
+.modal-close { width: 36px; height: 36px; border-radius: 10px; background: rgba(255,255,255,.05); color: var(--muted); font-size: 24px; }
+
+.form-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; }
+.form-grid label, .full-label { display: block; }
+.form-grid label > span, .full-label > span, .color-field legend { display: block; margin-bottom: 7px; color: var(--muted); font-size: 10px; font-weight: 700; }
+.full-label > span small { color: var(--muted-2); font-weight: 500; }
+.form-grid input, .full-label textarea { width: 100%; border: 1px solid var(--line); outline: 0; border-radius: 10px; background: rgba(255,255,255,.035); color: var(--ink); }
+.form-grid input { height: 40px; padding: 0 11px; }
+.full-label { margin-top: 15px; }
+.full-label textarea { resize: vertical; padding: 10px 11px; line-height: 1.45; }
+.form-grid input:focus, .full-label textarea:focus { border-color: rgba(141,208,170,.5); }
+
+.color-field { margin: 16px 0 0; padding: 0; border: 0; }
+.color-row { display: flex; gap: 9px; }
+.color-row button { width: 28px; height: 28px; border-radius: 9px; box-shadow: inset 0 0 0 1px rgba(255,255,255,.25); }
+.color-row button.selected { outline: 2px solid white; outline-offset: 3px; }
+.modal-actions { justify-content: space-between; margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+
+.history-list.large li { grid-template-columns: 56px minmax(0, 1fr); padding: 12px 2px; border-bottom: 1px solid var(--line); font-size: 12px; }
+
+.toast {
+  position: fixed;
+  z-index: 120;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  padding: 11px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: 11px;
+  background: #e5f4ec;
+  color: #102019;
+  box-shadow: 0 16px 40px rgba(0,0,0,.35);
+  font-size: 11px;
+  font-weight: 750;
+}
+
+@media (max-width: 1050px) {
+  .topbar { grid-template-columns: minmax(190px, .8fr) minmax(410px, 1.5fr) auto; gap: 12px; }
+  .save-pill { display: none; }
+  .workspace { grid-template-columns: 258px minmax(0, 1fr); }
+  .panel-section { padding: 14px; }
+  .marker-timer { min-width: 104px; }
+  .tool-button { padding: 0 8px; }
+}
+
+@media (max-width: 820px) {
+  .topbar { grid-template-columns: 190px minmax(370px, 1fr) auto; }
+  .top-actions .wide { width: 38px; overflow: hidden; color: transparent; position: relative; }
+  .top-actions .wide::after { content: "↗"; position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
+  .workspace { grid-template-columns: 230px minmax(0, 1fr); }
+  .map-stage { padding: 0 9px; }
+  .location-control { min-width: 120px; }
+  .tool-button:nth-child(2) { display: none; }
+}
+
+@media (display-mode: standalone) {
+  .app-shell { padding-top: env(safe-area-inset-top); }
+}
+
+@media (orientation: portrait) and (max-width: 760px) {
+  .app-shell { min-height: 700px; overflow: auto; }
+  .topbar { position: sticky; top: 0; height: auto; min-height: 112px; grid-template-columns: 1fr auto; grid-template-rows: 42px 58px; padding: 8px 11px; }
+  .brand-mark { width: 36px; height: 36px; border-radius: 10px; }
+  .brand-copy input { font-size: 15px; }
+  .timer-strip { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; }
+  .timer-readout { min-width: 118px; }
+  .timer-readout strong { font-size: 23px; }
+  .workspace { height: calc(100dvh - 112px); grid-template-columns: 210px minmax(510px, 1fr); overflow-x: auto; }
+  .focus-mode .workspace { grid-template-columns: minmax(510px, 1fr); }
+}
+
+@media (max-height: 720px) and (orientation: landscape) {
+  .topbar { height: 70px; padding-top: 7px; padding-bottom: 7px; }
+  .workspace { height: calc(100dvh - 70px); }
+  .panel-section { padding-top: 12px; padding-bottom: 12px; }
+  .team-card { min-height: 49px; }
+  .team-avatar { width: 34px; height: 34px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+</style>
+</head>
+<body>
+  <main id="app" aria-live="polite"></main>
+  <script>(function () {
+  "use strict";
+
+  var root = document.getElementById("app");
+  var DB_NAME = "teamlage-offline-db";
+  var DB_STORE = "board";
+  var STORAGE_KEY = "teamlage-offline-board-v2";
+  var TEAM_COLORS = [
+    "#f15b45", "#e9b949", "#3bbf91", "#49a7dc",
+    "#8b7cf6", "#e46ca7", "#e7f0ec", "#ff8a3d"
+  ];
+  var STATUS_META = {
+    "bereit": { label: "Bereit", short: "B", tone: "status-ready" },
+    "unterwegs": { label: "Unterwegs", short: "U", tone: "status-moving" },
+    "am-punkt": { label: "Am Punkt", short: "P", tone: "status-onsite" },
+    "pause": { label: "Pause", short: "–", tone: "status-paused" }
+  };
+  var initialNow = Date.now();
+  var DEFAULT_STATE = {
+    eventName: "Sommerlage 2026",
+    locationName: "Veranstaltungsgelände",
+    selectedTeamId: "team-alpha",
+    showGrid: true,
+    mapFit: "cover",
+    mapMode: "image",
+    liveMap: { lat: 52.5200, lng: 13.4050, zoom: 15 },
+    backgroundDataUrl: null,
+    backgroundName: null,
+    teams: [
+      {
+        id: "team-alpha",
+        name: "Team Alpha",
+        code: "A",
+        color: "#f15b45",
+        members: ["Lena", "Moritz", "Karim"],
+        status: "am-punkt",
+        note: "Nordzugang",
+        x: 26,
+        y: 31,
+        lat: null,
+        lng: null,
+        movedAt: initialNow,
+        markerScale: 1,
+        timer: {
+          mode: "down",
+          durationMinutes: 30,
+          warningMinutes: 5,
+          startedAt: null,
+          elapsedMs: 0
+        }
+      },
+      {
+        id: "team-bravo",
+        name: "Team Bravo",
+        code: "B",
+        color: "#49a7dc",
+        members: ["Jana", "Tobias"],
+        status: "unterwegs",
+        note: "Mobile Streife",
+        x: 59,
+        y: 54,
+        lat: null,
+        lng: null,
+        movedAt: initialNow,
+        markerScale: 1,
+        timer: {
+          mode: "down",
+          durationMinutes: 60,
+          warningMinutes: 5,
+          startedAt: null,
+          elapsedMs: 0
+        }
+      },
+      {
+        id: "team-charlie",
+        name: "Team Charlie",
+        code: "C",
+        color: "#e9b949",
+        members: ["Nele", "David", "Sam"],
+        status: "bereit",
+        note: "Bereitstellungsraum",
+        x: 76,
+        y: 24,
+        lat: null,
+        lng: null,
+        movedAt: initialNow,
+        markerScale: 1,
+        timer: {
+          mode: "up",
+          durationMinutes: 30,
+          warningMinutes: 5,
+          startedAt: null,
+          elapsedMs: 0
+        }
+      }
+    ],
+    history: [
+      {
+        id: "initial-1",
+        teamId: null,
+        text: "Offline-Lageboard geöffnet",
+        time: initialNow
+      }
+    ]
+  };
+
+  var board = clone(DEFAULT_STATE);
+  var ui = {
+    editorOpen: false,
+    historyOpen: false,
+    focusMode: false,
+    storageWarning: false,
+    toast: null
+  };
+  var storageState = "loading";
+  var hydrated = false;
+  var saveTimer = null;
+  var toastTimer = null;
+  var drag = null;
+  var suppressClickUntil = 0;
+  var databasePromise = null;
+  var audioContext = null;
+  var liveMapInstance = null;
+  var liveMapMarkers = {};
+
+  function clone(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function createId(prefix) {
+    return prefix + "-" + Date.now() + "-" + Math.random().toString(16).slice(2);
+  }
+
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function safeText(value, fallback, maxLength) {
+    if (typeof value !== "string") return fallback;
+    return value.slice(0, maxLength || 500);
+  }
+
+  function safeColor(value, fallback) {
+    return typeof value === "string" && /^#[0-9a-fA-F]{6}$/.test(value)
+      ? value
+      : fallback;
+  }
+
+  function safeImageData(value) {
+    if (typeof value !== "string") return null;
+    return /^data:image\/(?:png|jpe?g|webp|gif);base64,/i.test(value)
+      ? value
+      : null;
+  }
+
+  function esc(value) {
+    return String(value == null ? "" : value).replace(/[&<>"']/g, function (character) {
+      return {
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#039;"
+      }[character];
+    });
+  }
+
+  function normalizeLoadedState(value) {
+    var source = value && value.state && typeof value.state === "object"
+      ? value.state
+      : value;
+    if (!source || typeof source !== "object" || !Array.isArray(source.teams)) {
+      return null;
+    }
+
+    var legacyDuration = clamp(Number(
+      source.timer && source.timer.durationMinutes
+        ? source.timer.durationMinutes
+        : 30
+    ) || 30, 1, 240);
+    var usedIds = {};
+    var teams = source.teams.slice(0, 60).map(function (team, index) {
+      team = team && typeof team === "object" ? team : {};
+      var requestedId = safeText(team.id, "", 100);
+      var id = requestedId && !usedIds[requestedId]
+        ? requestedId
+        : createId("team");
+      usedIds[id] = true;
+      var timer = team.timer && typeof team.timer === "object" ? team.timer : {};
+      var mode = timer.mode === "up" ? "up" : "down";
+      var status = STATUS_META[team.status] ? team.status : "bereit";
+      var members = Array.isArray(team.members)
+        ? team.members.slice(0, 50).map(function (name) {
+            return safeText(name, "", 100).trim();
+          }).filter(Boolean)
+        : [];
+      return {
+        id: id,
+        name: safeText(team.name, "Team " + (index + 1), 100),
+        code: safeText(team.code, "T" + (index + 1), 3).toUpperCase(),
+        color: safeColor(team.color, TEAM_COLORS[index % TEAM_COLORS.length]),
+        members: members,
+        status: status,
+        note: safeText(team.note, "", 1000),
+        x: clamp(Number(team.x) || 50, 3, 97),
+        y: clamp(Number(team.y) || 50, 4, 96),
+        lat: typeof team.lat === "number" && isFinite(team.lat)
+          ? clamp(team.lat, -90, 90)
+          : null,
+        lng: typeof team.lng === "number" && isFinite(team.lng)
+          ? clamp(team.lng, -180, 180)
+          : null,
+        movedAt: Number(team.movedAt) || Date.now(),
+        markerScale: clamp(Number(team.markerScale) || 1, 0.8, 1.8),
+        timer: {
+          mode: mode,
+          durationMinutes: clamp(
+            Math.round(Number(timer.durationMinutes) || legacyDuration),
+            1,
+            240
+          ),
+          warningMinutes: clamp(
+            Math.round(Number(timer.warningMinutes) || 0),
+            0,
+            60
+          ),
+          startedAt: typeof timer.startedAt === "number"
+            ? timer.startedAt
+            : null,
+          elapsedMs: Math.max(0, Number(timer.elapsedMs) || 0)
+        }
+      };
+    });
+
+    var history = Array.isArray(source.history)
+      ? source.history.slice(0, 80).map(function (entry) {
+          entry = entry && typeof entry === "object" ? entry : {};
+          return {
+            id: safeText(entry.id, createId("log"), 120),
+            teamId: typeof entry.teamId === "string" ? entry.teamId : null,
+            text: safeText(entry.text, "Eintrag", 500),
+            time: Number(entry.time) || Date.now()
+          };
+        })
+      : [];
+    var selected = typeof source.selectedTeamId === "string"
+      && teams.some(function (team) { return team.id === source.selectedTeamId; })
+      ? source.selectedTeamId
+      : (teams[0] ? teams[0].id : null);
+
+    return {
+      eventName: safeText(source.eventName, DEFAULT_STATE.eventName, 120),
+      locationName: safeText(source.locationName, DEFAULT_STATE.locationName, 160),
+      selectedTeamId: selected,
+      showGrid: source.showGrid !== false,
+      mapFit: source.mapFit === "contain" ? "contain" : "cover",
+      mapMode: source.mapMode === "live" ? "live" : "image",
+      liveMap: {
+        lat: clamp(Number(source.liveMap && source.liveMap.lat) || 52.52, -90, 90),
+        lng: clamp(Number(source.liveMap && source.liveMap.lng) || 13.405, -180, 180),
+        zoom: clamp(Math.round(Number(source.liveMap && source.liveMap.zoom) || 15), 2, 19)
+      },
+      backgroundDataUrl: safeImageData(
+        source.backgroundDataUrl || source.backgroundData
+      ),
+      backgroundName: safeText(source.backgroundName, "", 180) || null,
+      teams: teams,
+      history: history.length ? history : clone(DEFAULT_STATE.history)
+    };
+  }
+
+  function formatClock(milliseconds, countDown) {
+    var totalSeconds = Math.max(
+      0,
+      countDown
+        ? Math.ceil(milliseconds / 1000)
+        : Math.floor(milliseconds / 1000)
+    );
+    var hours = Math.floor(totalSeconds / 3600);
+    var minutes = Math.floor((totalSeconds % 3600) / 60);
+    var seconds = totalSeconds % 60;
+    var minuteText = String(minutes).padStart(2, "0");
+    var secondText = String(seconds).padStart(2, "0");
+    if (hours > 0) {
+      return String(hours).padStart(2, "0") + ":" + minuteText + ":" + secondText;
+    }
+    return minuteText + ":" + secondText;
+  }
+
+  function formatTime(timestamp) {
+    try {
+      return new Intl.DateTimeFormat("de-DE", {
+        hour: "2-digit",
+        minute: "2-digit"
+      }).format(new Date(timestamp));
+    } catch (error) {
+      return "--:--";
+    }
+  }
+
+  function timerElapsedMs(timer, currentTime) {
+    return Math.max(
+      0,
+      timer.elapsedMs
+        + (timer.startedAt !== null
+          ? Math.max(0, currentTime - timer.startedAt)
+          : 0)
+    );
+  }
+
+  function timerView(team, currentTime) {
+    var elapsedMs = timerElapsedMs(team.timer, currentTime);
+    var durationMs = team.timer.durationMinutes * 60000;
+    var due = team.timer.mode === "down" && elapsedMs >= durationMs;
+    var displayMs = team.timer.mode === "down"
+      ? Math.max(0, durationMs - elapsedMs)
+      : elapsedMs;
+    return {
+      elapsedMs: elapsedMs,
+      due: due,
+      running: team.timer.startedAt !== null && !due,
+      warning: team.timer.mode === "down"
+        && team.timer.startedAt !== null
+        && !due
+        && team.timer.warningMinutes > 0
+        && displayMs <= team.timer.warningMinutes * 60000,
+      displayMs: displayMs
+    };
+  }
+
+  function selectedTeam() {
+    return board.teams.find(function (team) {
+      return team.id === board.selectedTeamId;
+    }) || null;
+  }
+
+  function findTeam(teamId) {
+    return board.teams.find(function (team) {
+      return team.id === teamId;
+    }) || null;
+  }
+
+  function addHistory(text, teamId) {
+    board.history.unshift({
+      id: createId("log"),
+      teamId: teamId || null,
+      text: text,
+      time: Date.now()
+    });
+    board.history = board.history.slice(0, 80);
+  }
+
+  function openDatabase() {
+    if (!("indexedDB" in window)) {
+      return Promise.reject(new Error("IndexedDB nicht verfügbar"));
+    }
+    if (databasePromise) return databasePromise;
+    databasePromise = new Promise(function (resolve, reject) {
+      var request = indexedDB.open(DB_NAME, 1);
+      request.onupgradeneeded = function () {
+        if (!request.result.objectStoreNames.contains(DB_STORE)) {
+          request.result.createObjectStore(DB_STORE);
+        }
+      };
+      request.onsuccess = function () { resolve(request.result); };
+      request.onerror = function () { reject(request.error || new Error("Datenbankfehler")); };
+    });
+    return databasePromise;
+  }
+
+  async function readFromDatabase() {
+    var db = await openDatabase();
+    return new Promise(function (resolve, reject) {
+      var transaction = db.transaction(DB_STORE, "readonly");
+      var request = transaction.objectStore(DB_STORE).get("state");
+      request.onsuccess = function () { resolve(request.result || null); };
+      request.onerror = function () { reject(request.error || new Error("Lesefehler")); };
+    });
+  }
+
+  async function writeToDatabase(value) {
+    var db = await openDatabase();
+    return new Promise(function (resolve, reject) {
+      var transaction = db.transaction(DB_STORE, "readwrite");
+      transaction.objectStore(DB_STORE).put(value, "state");
+      transaction.oncomplete = function () { resolve(); };
+      transaction.onerror = function () {
+        reject(transaction.error || new Error("Speicherfehler"));
+      };
+      transaction.onabort = function () {
+        reject(transaction.error || new Error("Speichern abgebrochen"));
+      };
+    });
+  }
+
+  async function loadSavedState() {
+    var loaded = null;
+    try {
+      loaded = await readFromDatabase();
+    } catch (databaseError) {
+      try {
+        var localRaw = window.localStorage.getItem(STORAGE_KEY);
+        loaded = localRaw ? JSON.parse(localRaw) : null;
+      } catch (localError) {
+        loaded = null;
+      }
+    }
+
+    var normalized = normalizeLoadedState(loaded);
+    if (normalized) board = normalized;
+    hydrated = true;
+    storageState = "saved";
+    render();
+    if (!normalized) persistSoon();
+  }
+
+  function persistSoon() {
+    if (!hydrated) return;
+    window.clearTimeout(saveTimer);
+    storageState = "saving";
+    updateStorageDom();
+    saveTimer = window.setTimeout(saveNow, 160);
+  }
+
+  async function saveNow() {
+    var snapshot = clone(board);
+    try {
+      await writeToDatabase(snapshot);
+      storageState = "saved";
+      ui.storageWarning = false;
+    } catch (databaseError) {
+      try {
+        window.localStorage.setItem(STORAGE_KEY, JSON.stringify(snapshot));
+        storageState = "local";
+        ui.storageWarning = false;
+      } catch (localError) {
+        storageState = "error";
+        ui.storageWarning = true;
+      }
+    }
+    updateStorageDom();
+    if (ui.storageWarning) render();
+  }
+
+  function updateStorageDom() {
+    var labels = {
+      loading: "Lade Daten …",
+      saving: "Speichert lokal …",
+      saved: "Lokal gespeichert",
+      local: "Lokal gespeichert",
+      error: "Sicherung exportieren"
+    };
+    Array.prototype.forEach.call(
+      document.querySelectorAll("[data-save-state]"),
+      function (element) {
+        element.className = "save-pill " + storageState;
+        element.textContent = "● " + labels[storageState];
+      }
+    );
+  }
+
+  function getAudioContext() {
+    try {
+      var AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return null;
+      if (!audioContext) audioContext = new AudioContextClass();
+      if (audioContext.state === "suspended") {
+        audioContext.resume().catch(function () {});
+      }
+      return audioContext;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function signalTimerAlarm() {
+    if (navigator.vibrate) navigator.vibrate([250, 120, 250, 120, 500]);
+    var context = getAudioContext();
+    if (!context) return;
+    try {
+      [0, 0.28, 0.56].forEach(function (offset) {
+        var oscillator = context.createOscillator();
+        var gain = context.createGain();
+        oscillator.frequency.value = 740;
+        gain.gain.setValueAtTime(0.001, context.currentTime + offset);
+        gain.gain.exponentialRampToValueAtTime(
+          0.17,
+          context.currentTime + offset + 0.02
+        );
+        gain.gain.exponentialRampToValueAtTime(
+          0.001,
+          context.currentTime + offset + 0.2
+        );
+        oscillator.connect(gain).connect(context.destination);
+        oscillator.start(context.currentTime + offset);
+        oscillator.stop(context.currentTime + offset + 0.22);
+      });
+    } catch (error) {
+      return;
+    }
+  }
+
+  function showToast(message, duration) {
+    ui.toast = message;
+    renderToast();
+    window.clearTimeout(toastTimer);
+    toastTimer = window.setTimeout(function () {
+      if (ui.toast === message) {
+        ui.toast = null;
+        renderToast();
+      }
+    }, duration || 2700);
+  }
+
+  function renderToast() {
+    var host = document.getElementById("toast-host");
+    if (!host) return;
+    host.innerHTML = "";
+    if (!ui.toast) return;
+    var toast = document.createElement("div");
+    toast.className = "toast";
+    toast.textContent = ui.toast;
+    host.appendChild(toast);
+  }
+
+  function renderTopbar(team, now) {
+    var result = [];
+    var teamTimer = team ? timerView(team, now) : null;
+    var runningCount = board.teams.filter(function (item) {
+      return timerView(item, now).running;
+    }).length;
+    var anyDue = board.teams.some(function (item) {
+      return timerView(item, now).due;
+    });
+
+    result.push('<header class="topbar' + (anyDue ? ' timer-due' : '') + '">');
+    result.push(
+      '<div class="brand-block">',
+      '<div class="brand-mark" aria-hidden="true">TL</div>',
+      '<div class="brand-copy">',
+      '<label for="event-name">Einsatzlage</label>',
+      '<input id="event-name" data-field="event-name" value="' + esc(board.eventName) + '" aria-label="Name der Veranstaltung">',
+      '</div></div>'
+    );
+    result.push('<section class="timer-strip" aria-label="Timer des ausgewählten Teams">');
+    if (team && teamTimer) {
+      var timerLabel = teamTimer.due
+        ? "ABGELAUFEN"
+        : teamTimer.warning
+          ? "LETZTE " + team.timer.warningMinutes + " MIN"
+          : team.timer.mode === "down"
+            ? "Ablaufend"
+            : "Auflaufend";
+      result.push(
+        '<div class="timer-team">',
+        '<span class="timer-team-avatar" style="background:' + esc(team.color) + '">' + esc(team.code.slice(0, 3) || "?") + '</span>',
+        '<span class="timer-team-copy"><small>Timer für</small><strong>' + esc(team.name) + '</strong></span>',
+        '</div>',
+        '<div class="timer-readout' + (teamTimer.due ? ' due' : '') + (teamTimer.warning ? ' warning' : '') + '" data-top-readout>',
+        '<span class="timer-label" data-top-timer-label>' + esc(timerLabel) + '</span>',
+        '<strong data-timer-value="' + esc(team.id) + '">' + formatClock(teamTimer.displayMs, team.timer.mode === "down") + '</strong>',
+        '</div>',
+        '<div class="timer-actions">'
+      );
+      if (teamTimer.running) {
+        result.push(
+          '<button class="icon-button wide" data-action="timer-pause" data-team-id="' + esc(team.id) + '"><span aria-hidden="true">Ⅱ</span> Pause</button>'
+        );
+      } else {
+        result.push(
+          '<button class="button ' + (teamTimer.due ? 'alarm-button' : 'primary') + '" data-action="timer-start" data-team-id="' + esc(team.id) + '"><span aria-hidden="true">▶</span> ' + (teamTimer.due ? 'Neu starten' : 'Start') + '</button>'
+        );
+      }
+      result.push(
+        '<button class="icon-button" data-action="timer-reset" data-team-id="' + esc(team.id) + '" title="Timer zurücksetzen">↻</button>',
+        '</div>',
+        '<span class="running-timers" data-running-count>' + runningCount + ' aktiv</span>'
+      );
+    } else {
+      result.push('<span class="timer-empty">Team auswählen, um den Timer zu steuern</span>');
+    }
+    result.push(
+      '</section>',
+      '<div class="top-actions">',
+      '<span class="offline-badge">● Offline</span>',
+      '<span class="save-pill ' + storageState + '" data-save-state></span>',
+      '<button class="icon-button wide" data-action="toggle-focus">' + (ui.focusMode ? 'Übersicht' : 'Kartenmodus') + '</button>',
+      '</div>',
+      '</header>'
+    );
+    return result.join("");
+  }
+
+  function renderRoster(now) {
+    var result = [];
+    result.push(
+      '<section class="panel-section roster-section">',
+      '<div class="section-heading"><div><span class="eyebrow">Kräfte</span><h2>' + board.teams.length + ' Teams</h2></div>',
+      '<button class="round-add" data-action="add-team" aria-label="Team hinzufügen">+</button></div>',
+      '<div class="team-list">'
+    );
+    board.teams.forEach(function (team) {
+      var status = STATUS_META[team.status];
+      var teamTimer = timerView(team, now);
+      var classes = "team-timer-chip"
+        + (teamTimer.running ? " running" : "")
+        + (teamTimer.warning ? " warning" : "")
+        + (teamTimer.due ? " due" : "");
+      result.push(
+        '<button class="team-card' + (team.id === board.selectedTeamId ? ' selected' : '') + '" data-action="select-team" data-team-id="' + esc(team.id) + '">',
+        '<span class="team-avatar" style="background:' + esc(team.color) + '">' + esc(team.code.slice(0, 3) || "?") + '</span>',
+        '<span class="team-card-copy"><strong>' + esc(team.name) + '</strong><small>' + esc(team.members.length ? team.members.join(" · ") : "Noch keine Mitglieder") + '</small></span>',
+        '<span class="team-card-side">',
+        '<span class="' + classes + '" data-team-chip="' + esc(team.id) + '">' + (team.timer.mode === "down" ? "↓ " : "↑ ") + formatClock(teamTimer.displayMs, team.timer.mode === "down") + '</span>',
+        '<span class="status-dot ' + status.tone + '" title="' + esc(status.label) + '"></span>',
+        '</span></button>'
+      );
+    });
+    result.push(
+      '</div>',
+      '<button class="button ghost full" data-action="add-team">+ Neues Team anlegen</button>',
+      '</section>'
+    );
+    return result.join("");
+  }
+
+  function renderSelectedPanel(team, now) {
+    if (!team) return "";
+    var teamTimer = timerView(team, now);
+    var stateText = teamTimer.due
+      ? "Abgelaufen"
+      : teamTimer.warning
+        ? "Vorwarnung"
+        : teamTimer.running
+          ? "Läuft"
+          : "Bereit";
+    var result = [];
+    result.push(
+      '<section class="panel-section selected-section">',
+      '<div class="selected-title"><div><span class="eyebrow">Ausgewählt</span><h3>' + esc(team.name) + '</h3></div>',
+      '<button class="text-button" data-action="open-editor" data-team-id="' + esc(team.id) + '">Bearbeiten</button></div>',
+      '<div class="status-grid">'
+    );
+    Object.keys(STATUS_META).forEach(function (statusKey) {
+      var status = STATUS_META[statusKey];
+      result.push(
+        '<button class="' + (team.status === statusKey ? 'active' : '') + '" data-action="set-status" data-team-id="' + esc(team.id) + '" data-status="' + statusKey + '">',
+        '<span class="mini-dot ' + status.tone + '"></span>' + esc(status.label) + '</button>'
+      );
+    });
+    result.push(
+      '</div>',
+      '<div class="team-timer-panel' + (teamTimer.warning ? ' warning' : '') + (teamTimer.due ? ' due' : '') + '" data-team-timer-panel="' + esc(team.id) + '">',
+      '<div class="team-timer-heading"><span>Eigener Timer</span><b data-timer-state="' + esc(team.id) + '">' + stateText + '</b></div>',
+      '<div class="timer-mode-switch" aria-label="Zählrichtung auswählen">',
+      '<button class="' + (team.timer.mode === "down" ? 'active' : '') + '" data-action="timer-mode" data-team-id="' + esc(team.id) + '" data-mode="down"><span>↓</span> Ablaufen</button>',
+      '<button class="' + (team.timer.mode === "up" ? 'active' : '') + '" data-action="timer-mode" data-team-id="' + esc(team.id) + '" data-mode="up"><span>↑</span> Auflaufen</button>',
+      '</div>',
+      '<div class="team-timer-readout" data-timer-value="' + esc(team.id) + '">' + formatClock(teamTimer.displayMs, team.timer.mode === "down") + '</div>'
+    );
+    if (team.timer.mode === "down") {
+      result.push(
+        '<div class="duration-row"><span>Dauer</span>',
+        '<button class="' + (team.timer.durationMinutes === 30 ? 'active' : '') + '" data-action="timer-duration" data-team-id="' + esc(team.id) + '" data-minutes="30">30 min</button>',
+        '<button class="' + (team.timer.durationMinutes === 60 ? 'active' : '') + '" data-action="timer-duration" data-team-id="' + esc(team.id) + '" data-minutes="60">60 min</button>',
+        '<label><input type="number" min="1" max="240" inputmode="numeric" data-field="timer-duration" data-team-id="' + esc(team.id) + '" value="' + team.timer.durationMinutes + '" aria-label="Eigene Dauer in Minuten">min</label>',
+        '</div>',
+        '<div class="warning-row"><span>Marker pulsiert ab</span>'
+      );
+      [0, 1, 5, 10].forEach(function (minutes) {
+        result.push(
+          '<button class="' + (team.timer.warningMinutes === minutes ? 'active' : '') + '" data-action="timer-warning" data-team-id="' + esc(team.id) + '" data-minutes="' + minutes + '">' + (minutes === 0 ? "Aus" : minutes + " min") + '</button>'
+        );
+      });
+      result.push('</div>');
+    }
+    result.push('<div class="team-timer-actions">');
+    if (teamTimer.running) {
+      result.push(
+        '<button class="timer-action pause" data-action="timer-pause" data-team-id="' + esc(team.id) + '">Ⅱ Pause</button>'
+      );
+    } else {
+      result.push(
+        '<button class="timer-action start" data-action="timer-start" data-team-id="' + esc(team.id) + '">▶ ' + (teamTimer.due ? "Neu starten" : "Start") + '</button>'
+      );
+    }
+    result.push(
+      '<button class="timer-action reset" data-action="timer-reset" data-team-id="' + esc(team.id) + '">↻ Nullstellen</button>',
+      '</div></div>',
+      '<div class="marker-settings">',
+      '<div><span>Markergröße auf der Karte</span><b data-scale-label>' + Math.round(team.markerScale * 100) + ' %</b></div>',
+      '<label><small aria-hidden="true">A</small><input type="range" min="0.8" max="1.8" step="0.1" value="' + team.markerScale + '" data-field="marker-scale" data-team-id="' + esc(team.id) + '" aria-label="Markergröße"><strong aria-hidden="true">A</strong></label>',
+      '</div>'
+    );
+    if (team.note) {
+      result.push('<p class="team-note">' + esc(team.note) + '</p>');
+    }
+    result.push('</section>');
+    return result.join("");
+  }
+
+  function renderHistoryPreview() {
+    var result = [];
+    result.push(
+      '<section class="panel-section log-section">',
+      '<div class="selected-title"><div><span class="eyebrow">Dokumentation</span><h3>Lageverlauf</h3></div>',
+      '<button class="text-button" data-action="open-history">Alle</button></div>',
+      '<ol class="history-list">'
+    );
+    board.history.slice(0, 4).forEach(function (entry) {
+      result.push(
+        '<li><time>' + esc(formatTime(entry.time)) + '</time><span>' + esc(entry.text) + '</span></li>'
+      );
+    });
+    result.push('</ol></section>');
+    return result.join("");
+  }
+
+  function renderMarker(team, now) {
+    var status = STATUS_META[team.status];
+    var teamTimer = timerView(team, now);
+    var classes = "map-team"
+      + (team.id === board.selectedTeamId ? " selected" : "")
+      + (teamTimer.warning ? " timer-warning" : "")
+      + (teamTimer.due ? " timer-expired" : "");
+    var detail = teamTimer.due
+      ? "Abgelaufen"
+      : teamTimer.warning
+        ? "Letzte " + team.timer.warningMinutes + " min"
+        : status.label + " · " + team.members.length + " Pers.";
+    return [
+      '<button class="' + classes + '" data-marker-team="' + esc(team.id) + '" data-action="select-team" data-team-id="' + esc(team.id) + '"',
+      ' style="left:' + team.x + '%;top:' + team.y + '%;transform:translate(-25px,-29px) scale(' + team.markerScale + ');transform-origin:25px 29px"',
+      ' aria-label="' + esc(team.name + " verschieben. Status " + status.label) + '">',
+      '<span class="marker-shadow"></span>',
+      '<span class="marker-pin" style="background:' + esc(team.color) + '"><b>' + esc(team.code.slice(0, 3) || "?") + '</b><i class="' + status.tone + '">' + esc(status.short) + '</i></span>',
+      '<span class="marker-timer' + (team.x > 66 ? ' align-left' : '') + '">',
+      '<small>' + esc(team.name) + '</small>',
+      '<strong><b aria-hidden="true">' + (team.timer.mode === "down" ? "↓" : "↑") + '</b> <span data-timer-value="' + esc(team.id) + '">' + formatClock(teamTimer.displayMs, team.timer.mode === "down") + '</span></strong>',
+      '<em data-timer-detail="' + esc(team.id) + '">' + esc(detail) + '</em>',
+      '</span></button>'
+    ].join("");
+  }
+
+  function renderMap(now) {
+    var isLive = board.mapMode === "live";
+    var result = [];
+    result.push(
+      '<section class="map-stage" aria-label="Taktische Geländekarte">',
+      '<div class="map-toolbar">',
+      '<div class="map-mode-switch" aria-label="Kartenquelle wählen">',
+      '<button class="' + (!isLive ? 'active' : '') + '" data-action="set-map-mode" data-mode="image">Eigenes Bild</button>',
+      '<button class="' + (isLive ? 'active' : '') + '" data-action="set-map-mode" data-mode="live">Live-Karte</button>',
+      '</div>'
+    );
+    if (isLive) {
+      result.push(
+        '<form class="location-search" data-action="search-location-form">',
+        '<input type="text" data-field="location-search" placeholder="Ort suchen (benötigt Internet) …" aria-label="Ort auf der Live-Karte suchen">',
+        '</form>',
+        '<div class="toolbar-group">',
+        '<button class="tool-button" data-action="use-my-location">Mein Standort</button>',
+        '</div>'
+      );
+    } else {
+      result.push(
+        '<div class="location-control"><span class="location-pin">⌖</span><input data-field="location-name" value="' + esc(board.locationName) + '" aria-label="Bezeichnung des Geländes"></div>',
+        '<div class="toolbar-group">',
+        '<button class="tool-button' + (board.showGrid ? ' active' : '') + '" data-action="toggle-grid">Raster</button>',
+        '<button class="tool-button" data-action="toggle-fit">' + (board.mapFit === "cover" ? "Fläche füllen" : "Ganzes Bild") + '</button>',
+        '<button class="tool-button accent" data-action="choose-background">' + (board.backgroundDataUrl ? "Plan wechseln" : "Geländeplan laden") + '</button>',
+        '<input id="background-input" type="file" accept="image/*" hidden>',
+        '</div>'
+      );
+    }
+    result.push('</div>');
+
+    if (isLive) {
+      result.push(
+        '<div class="map-canvas" id="map-canvas">',
+        '<div class="leaflet-host" id="leaflet-host"></div>'
+      );
+      if (!hasLeaflet()) {
+        result.push(
+          '<div class="map-live-banner">Live-Karte lädt … beim ersten Mal wird Internet benötigt, danach auch offline verfügbar.</div>'
+        );
+      }
+    } else {
+      result.push(
+        '<div class="map-canvas' + (board.showGrid ? ' with-grid' : '') + (board.backgroundDataUrl ? ' has-image' : '') + '" id="map-canvas">'
+      );
+      if (board.backgroundDataUrl) {
+        result.push(
+          '<img class="map-background fit-' + board.mapFit + '" src="' + esc(board.backgroundDataUrl) + '" alt="Hinterlegter Geländeplan" draggable="false">'
+        );
+      } else {
+        result.push(
+          '<div class="empty-map"><div class="empty-map-symbol">⌖</div><strong>Geländeplan hinterlegen</strong>',
+          '<p>Foto, Lageplan oder Kartenausschnitt auswählen. Das Bild bleibt vollständig auf diesem Gerät.</p>',
+          '<button class="button primary" data-action="choose-background">Bild auswählen</button></div>'
+        );
+      }
+      result.push('<div class="north-arrow" aria-label="Nordrichtung"><span>N</span><i></i></div>');
+      board.teams.forEach(function (team) {
+        result.push(renderMarker(team, now));
+      });
+    }
+
+    result.push(
+      '<div class="map-legend">',
+      '<span><i class="mini-dot status-onsite"></i> Am Punkt</span>',
+      '<span><i class="mini-dot status-moving"></i> Unterwegs</span>',
+      '<span><i class="mini-dot status-ready"></i> Bereit</span>',
+      '</div>'
+    );
+    if (ui.storageWarning) {
+      result.push(
+        '<div class="storage-warning"><strong>Gerätespeicherung blockiert.</strong><br>Bitte nach Änderungen über „Vollsicherung exportieren“ sichern.</div>'
+      );
+    }
+    result.push(
+      '</div>',
+      '<footer class="map-footer">',
+      '<div><span class="live-indicator"></span>Lage aktiv · ' + board.teams.filter(function (team) { return team.status !== "pause"; }).length + ' Teams im Einsatz</div>',
+      '<div class="footer-actions">'
+    );
+    if (!isLive && board.backgroundDataUrl) {
+      result.push('<button class="text-button danger" data-action="remove-background">Plan entfernen</button>');
+    }
+    result.push(
+      '<button class="text-button" data-action="export-board">Vollsicherung exportieren</button>',
+      '<button class="text-button" data-action="choose-import">Sicherung einspielen</button>',
+      '<input id="import-input" hidden type="file" accept="application/json,.json">',
+      '</div></footer></section>'
+    );
+    return result.join("");
+  }
+
+  function hasLeaflet() {
+    return typeof window.L !== "undefined" && !!window.L.map;
+  }
+
+  function ensureTeamGeo(team) {
+    if (typeof team.lat === "number" && typeof team.lng === "number") return;
+    var spread = 0.01;
+    team.lat = board.liveMap.lat + (Math.random() - 0.5) * spread;
+    team.lng = board.liveMap.lng + (Math.random() - 0.5) * spread;
+  }
+
+  function teamDivIcon(team, now) {
+    var status = STATUS_META[team.status];
+    var teamTimer = timerView(team, now);
+    var detail = teamTimer.due
+      ? "Abgelaufen"
+      : teamTimer.warning
+        ? "Letzte " + team.timer.warningMinutes + " min"
+        : status.label + " · " + team.members.length + " Pers.";
+    var html = [
+      '<span class="marker-shadow"></span>',
+      '<span class="marker-pin" style="background:' + esc(team.color) + '"><b>' + esc(team.code.slice(0, 3) || "?") + '</b><i class="' + status.tone + '">' + esc(status.short) + '</i></span>',
+      '<span class="marker-timer">',
+      '<small>' + esc(team.name) + '</small>',
+      '<strong><b aria-hidden="true">' + (team.timer.mode === "down" ? "↓" : "↑") + '</b> ' + formatClock(teamTimer.displayMs, team.timer.mode === "down") + '</strong>',
+      '<em>' + esc(detail) + '</em>',
+      '</span>'
+    ].join("");
+    return window.L.divIcon({
+      className: "tl-marker-icon map-team"
+        + (team.id === board.selectedTeamId ? " selected" : "")
+        + (teamTimer.warning ? " timer-warning" : "")
+        + (teamTimer.due ? " timer-expired" : ""),
+      html: html,
+      iconSize: [50, 58],
+      iconAnchor: [25, 29]
+    });
+  }
+
+  function teardownLiveMap() {
+    if (liveMapInstance) {
+      try { liveMapInstance.remove(); } catch (error) { /* Container bereits ersetzt, ignorieren. */ }
+    }
+    liveMapInstance = null;
+    liveMapMarkers = {};
+  }
+
+  function initLiveMap() {
+    var host = document.getElementById("leaflet-host");
+    if (!host || !hasLeaflet()) return;
+
+    var now = Date.now();
+    board.teams.forEach(ensureTeamGeo);
+
+    var map = window.L.map(host, {
+      center: [board.liveMap.lat, board.liveMap.lng],
+      zoom: board.liveMap.zoom,
+      zoomControl: true,
+      attributionControl: true
+    });
+    window.L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      maxZoom: 19,
+      attribution: "© OpenStreetMap-Mitwirkende"
+    }).addTo(map);
+
+    liveMapInstance = map;
+    liveMapMarkers = {};
+
+    board.teams.forEach(function (team) {
+      var marker = window.L.marker([team.lat, team.lng], {
+        icon: teamDivIcon(team, now),
+        draggable: true
+      }).addTo(map);
+      marker.on("click", function () {
+        board.selectedTeamId = team.id;
+        render();
+        persistSoon();
+      });
+      marker.on("dblclick", function (domEvent) {
+        window.L.DomEvent.stopPropagation(domEvent);
+        board.selectedTeamId = team.id;
+        ui.editorOpen = true;
+        render();
+      });
+      marker.on("dragend", function () {
+        var position = marker.getLatLng();
+        var current = findTeam(team.id);
+        if (!current) return;
+        current.lat = clamp(position.lat, -90, 90);
+        current.lng = clamp(position.lng, -180, 180);
+        current.movedAt = Date.now();
+        board.selectedTeamId = current.id;
+        addHistory(current.name + " auf der Live-Karte versetzt", current.id);
+        render();
+        persistSoon();
+      });
+      liveMapMarkers[team.id] = marker;
+    });
+
+    map.on("moveend zoomend", function () {
+      var center = map.getCenter();
+      board.liveMap.lat = center.lat;
+      board.liveMap.lng = center.lng;
+      board.liveMap.zoom = map.getZoom();
+      persistSoon();
+    });
+  }
+
+  function refreshLiveMapMarkers(now) {
+    board.teams.forEach(function (team) {
+      var marker = liveMapMarkers[team.id];
+      if (!marker) return;
+      marker.setIcon(teamDivIcon(team, now));
+    });
+  }
+
+  function searchLiveLocation(query) {
+    if (!query || !query.trim()) return;
+    if (!navigator.onLine) {
+      showToast("Ortssuche benötigt eine Internetverbindung.", 3200);
+      return;
+    }
+    showToast("Suche „" + query + "“ …", 2000);
+    fetch(
+      "https://nominatim.openstreetmap.org/search?format=json&limit=1&q=" + encodeURIComponent(query)
+    )
+      .then(function (response) { return response.json(); })
+      .then(function (results) {
+        if (!results || !results[0]) {
+          showToast("Kein Ort gefunden.", 2800);
+          return;
+        }
+        board.liveMap.lat = Number(results[0].lat);
+        board.liveMap.lng = Number(results[0].lon);
+        board.liveMap.zoom = 15;
+        render();
+        persistSoon();
+      })
+      .catch(function () {
+        showToast("Suche fehlgeschlagen (offline oder Dienst nicht erreichbar).", 3200);
+      });
+  }
+
+  function useMyLocation() {
+    if (!("geolocation" in navigator)) {
+      showToast("Standortabfrage wird von diesem Gerät nicht unterstützt.", 3200);
+      return;
+    }
+    showToast("Standort wird ermittelt …", 2200);
+    navigator.geolocation.getCurrentPosition(
+      function (position) {
+        board.liveMap.lat = position.coords.latitude;
+        board.liveMap.lng = position.coords.longitude;
+        board.liveMap.zoom = 16;
+        render();
+        persistSoon();
+      },
+      function () {
+        showToast("Standort konnte nicht ermittelt werden.", 3200);
+      },
+      { enableHighAccuracy: true, timeout: 8000 }
+    );
+  }
+
+  function renderEditor(team) {
+    if (!ui.editorOpen || !team) return "";
+    var result = [];
+    result.push(
+      '<div class="modal-backdrop" data-action="close-modal">',
+      '<section class="team-editor">',
+      '<div class="modal-heading"><div><span class="eyebrow">Teamdaten</span><h2>' + esc(team.name) + '</h2></div>',
+      '<button class="modal-close" data-action="close-modal" aria-label="Schließen">×</button></div>',
+      '<div class="form-grid">',
+      '<label><span>Teamname</span><input data-field="team-name" data-team-id="' + esc(team.id) + '" value="' + esc(team.name) + '"></label>',
+      '<label><span>Kürzel auf der Karte</span><input data-field="team-code" data-team-id="' + esc(team.id) + '" maxlength="3" value="' + esc(team.code) + '"></label>',
+      '</div>',
+      '<fieldset class="color-field"><legend>Teamfarbe</legend><div class="color-row">'
+    );
+    TEAM_COLORS.forEach(function (color) {
+      result.push(
+        '<button class="' + (team.color === color ? 'selected' : '') + '" style="background:' + color + '" data-action="set-color" data-team-id="' + esc(team.id) + '" data-color="' + color + '" aria-label="Farbe ' + color + '"></button>'
+      );
+    });
+    result.push(
+      '</div></fieldset>',
+      '<label class="full-label"><span>Mitglieder <small>eine Person pro Zeile</small></span>',
+      '<textarea rows="5" data-field="team-members" data-team-id="' + esc(team.id) + '" placeholder="Vorname Nachname">' + esc(team.members.join("\n")) + '</textarea></label>',
+      '<label class="full-label"><span>Auftrag / Notiz</span>',
+      '<textarea rows="3" data-field="team-note" data-team-id="' + esc(team.id) + '" placeholder="z. B. Nordzugang sichern">' + esc(team.note) + '</textarea></label>',
+      '<div class="modal-actions">',
+      '<button class="text-button danger" data-action="delete-team" data-team-id="' + esc(team.id) + '">Team löschen</button>',
+      '<button class="button primary" data-action="close-modal">Fertig</button>',
+      '</div></section></div>'
+    );
+    return result.join("");
+  }
+
+  function renderHistoryModal() {
+    if (!ui.historyOpen) return "";
+    var result = [];
+    result.push(
+      '<div class="modal-backdrop" data-action="close-modal">',
+      '<section class="history-modal">',
+      '<div class="modal-heading"><div><span class="eyebrow">Chronologisch</span><h2>Lageverlauf</h2></div>',
+      '<button class="modal-close" data-action="close-modal" aria-label="Schließen">×</button></div>',
+      '<ol class="history-list large">'
+    );
+    board.history.forEach(function (entry) {
+      result.push(
+        '<li><time>' + esc(formatTime(entry.time)) + '</time><span>' + esc(entry.text) + '</span></li>'
+      );
+    });
+    result.push(
+      '</ol><div class="modal-actions">',
+      '<button class="text-button danger" data-action="clear-history">Verlauf leeren</button>',
+      '<button class="button primary" data-action="close-modal">Schließen</button>',
+      '</div></section></div>'
+    );
+    return result.join("");
+  }
+
+  function render() {
+    var now = Date.now();
+    var selected = selectedTeam();
+    var result = [];
+    result.push('<div class="app-shell' + (ui.focusMode ? ' focus-mode' : '') + '">');
+    result.push(renderTopbar(selected, now));
+    result.push('<div class="workspace"><aside class="side-panel">');
+    result.push(renderRoster(now));
+    result.push(renderSelectedPanel(selected, now));
+    result.push(renderHistoryPreview());
+    result.push('</aside>');
+    result.push(renderMap(now));
+    result.push('</div>');
+    result.push(renderEditor(selected));
+    result.push(renderHistoryModal());
+    result.push('<div id="toast-host"></div></div>');
+    root.innerHTML = result.join("");
+    updateStorageDom();
+    renderToast();
+    teardownLiveMap();
+    if (board.mapMode === "live") initLiveMap();
+    updateTimerDom(now);
+  }
+
+  function updateTimerDom(now) {
+    var teamById = {};
+    board.teams.forEach(function (team) { teamById[team.id] = team; });
+    Array.prototype.forEach.call(
+      document.querySelectorAll("[data-timer-value]"),
+      function (element) {
+        var team = teamById[element.getAttribute("data-timer-value")];
+        if (!team) return;
+        var view = timerView(team, now);
+        element.textContent = formatClock(view.displayMs, team.timer.mode === "down");
+      }
+    );
+    Array.prototype.forEach.call(
+      document.querySelectorAll("[data-team-chip]"),
+      function (element) {
+        var team = teamById[element.getAttribute("data-team-chip")];
+        if (!team) return;
+        var view = timerView(team, now);
+        element.className = "team-timer-chip"
+          + (view.running ? " running" : "")
+          + (view.warning ? " warning" : "")
+          + (view.due ? " due" : "");
+        element.textContent = (team.timer.mode === "down" ? "↓ " : "↑ ")
+          + formatClock(view.displayMs, team.timer.mode === "down");
+      }
+    );
+    Array.prototype.forEach.call(
+      document.querySelectorAll("[data-marker-team]"),
+      function (element) {
+        var team = teamById[element.getAttribute("data-marker-team")];
+        if (!team) return;
+        var view = timerView(team, now);
+        element.classList.toggle("timer-warning", view.warning);
+        element.classList.toggle("timer-expired", view.due);
+      }
+    );
+    Array.prototype.forEach.call(
+      document.querySelectorAll("[data-timer-detail]"),
+      function (element) {
+        var team = teamById[element.getAttribute("data-timer-detail")];
+        if (!team) return;
+        var view = timerView(team, now);
+        element.textContent = view.due
+          ? "Abgelaufen"
+          : view.warning
+            ? "Letzte " + team.timer.warningMinutes + " min"
+            : STATUS_META[team.status].label + " · " + team.members.length + " Pers.";
+      }
+    );
+    Array.prototype.forEach.call(
+      document.querySelectorAll("[data-team-timer-panel]"),
+      function (element) {
+        var team = teamById[element.getAttribute("data-team-timer-panel")];
+        if (!team) return;
+        var view = timerView(team, now);
+        element.classList.toggle("warning", view.warning);
+        element.classList.toggle("due", view.due);
+      }
+    );
+    Array.prototype.forEach.call(
+      document.querySelectorAll("[data-timer-state]"),
+      function (element) {
+        var team = teamById[element.getAttribute("data-timer-state")];
+        if (!team) return;
+        var view = timerView(team, now);
+        element.textContent = view.due
+          ? "Abgelaufen"
+          : view.warning
+            ? "Vorwarnung"
+            : view.running
+              ? "Läuft"
+              : "Bereit";
+      }
+    );
+
+    var selected = selectedTeam();
+    var selectedTimer = selected ? timerView(selected, now) : null;
+    var topReadout = document.querySelector("[data-top-readout]");
+    var topLabel = document.querySelector("[data-top-timer-label]");
+    if (topReadout && topLabel && selected && selectedTimer) {
+      topReadout.classList.toggle("warning", selectedTimer.warning);
+      topReadout.classList.toggle("due", selectedTimer.due);
+      topLabel.textContent = selectedTimer.due
+        ? "ABGELAUFEN"
+        : selectedTimer.warning
+          ? "LETZTE " + selected.timer.warningMinutes + " MIN"
+          : selected.timer.mode === "down"
+            ? "Ablaufend"
+            : "Auflaufend";
+    }
+    var anyDue = board.teams.some(function (team) {
+      return timerView(team, now).due;
+    });
+    var topbar = document.querySelector(".topbar");
+    if (topbar) topbar.classList.toggle("timer-due", anyDue);
+    var running = board.teams.filter(function (team) {
+      return timerView(team, now).running;
+    }).length;
+    var runningLabel = document.querySelector("[data-running-count]");
+    if (runningLabel) runningLabel.textContent = running + " aktiv";
+
+    if (board.mapMode === "live" && liveMapInstance) refreshLiveMapMarkers(now);
+  }
+
+  function createTeam() {
+    var number = board.teams.length + 1;
+    var id = createId("team");
+    var team = {
+      id: id,
+      name: "Team " + number,
+      code: ("T" + number).slice(0, 3),
+      color: TEAM_COLORS[board.teams.length % TEAM_COLORS.length],
+      members: [],
+      status: "bereit",
+      note: "",
+      x: 50,
+      y: 50,
+      lat: null,
+      lng: null,
+      movedAt: Date.now(),
+      markerScale: 1,
+      timer: {
+        mode: "down",
+        durationMinutes: 30,
+        warningMinutes: 5,
+        startedAt: null,
+        elapsedMs: 0
+      }
+    };
+    board.teams.push(team);
+    board.selectedTeamId = id;
+    addHistory(team.name + " angelegt", id);
+    ui.editorOpen = true;
+    render();
+    persistSoon();
+  }
+
+  function removeTeam(teamId) {
+    var team = findTeam(teamId);
+    if (!team) return;
+    if (!window.confirm(team.name + " wirklich entfernen?")) return;
+    board.teams = board.teams.filter(function (item) {
+      return item.id !== teamId;
+    });
+    if (board.selectedTeamId === teamId) {
+      board.selectedTeamId = board.teams[0] ? board.teams[0].id : null;
+    }
+    addHistory(team.name + " entfernt");
+    ui.editorOpen = false;
+    render();
+    persistSoon();
+  }
+
+  function startTeamTimer(teamId) {
+    var team = findTeam(teamId);
+    if (!team) return;
+    getAudioContext();
+    var now = Date.now();
+    var elapsed = timerElapsedMs(team.timer, now);
+    var duration = team.timer.durationMinutes * 60000;
+    team.timer.elapsedMs = team.timer.mode === "down" && elapsed >= duration
+      ? 0
+      : elapsed;
+    team.timer.startedAt = now;
+    addHistory(
+      team.name + ": " + (team.timer.mode === "down" ? "Countdown" : "Stoppuhr") + " gestartet",
+      team.id
+    );
+    render();
+    persistSoon();
+  }
+
+  function pauseTeamTimer(teamId) {
+    var team = findTeam(teamId);
+    if (!team) return;
+    var elapsed = timerElapsedMs(team.timer, Date.now());
+    team.timer.elapsedMs = team.timer.mode === "down"
+      ? Math.min(elapsed, team.timer.durationMinutes * 60000)
+      : elapsed;
+    team.timer.startedAt = null;
+    addHistory(team.name + ": Timer pausiert", team.id);
+    render();
+    persistSoon();
+  }
+
+  function resetTeamTimer(teamId) {
+    var team = findTeam(teamId);
+    if (!team) return;
+    team.timer.startedAt = null;
+    team.timer.elapsedMs = 0;
+    addHistory(team.name + ": Timer zurückgesetzt", team.id);
+    render();
+    persistSoon();
+  }
+
+  function setTimerMode(teamId, mode) {
+    var team = findTeam(teamId);
+    if (!team || (mode !== "down" && mode !== "up") || team.timer.mode === mode) {
+      return;
+    }
+    team.timer.mode = mode;
+    team.timer.startedAt = null;
+    team.timer.elapsedMs = 0;
+    addHistory(
+      team.name + ": Timer auf " + (mode === "down" ? "Ablaufen" : "Auflaufen") + " gestellt",
+      team.id
+    );
+    render();
+    persistSoon();
+  }
+
+  function setTimerDuration(teamId, minutes) {
+    var team = findTeam(teamId);
+    if (!team) return;
+    team.timer.durationMinutes = clamp(Math.round(Number(minutes) || 1), 1, 240);
+    team.timer.startedAt = null;
+    team.timer.elapsedMs = 0;
+    render();
+    persistSoon();
+  }
+
+  function setTimerWarning(teamId, minutes) {
+    var team = findTeam(teamId);
+    if (!team) return;
+    team.timer.warningMinutes = clamp(Math.round(Number(minutes) || 0), 0, 60);
+    render();
+    persistSoon();
+  }
+
+  function tick() {
+    var now = Date.now();
+    var newlyDue = board.teams.filter(function (team) {
+      return team.timer.mode === "down"
+        && team.timer.startedAt !== null
+        && timerElapsedMs(team.timer, now) >= team.timer.durationMinutes * 60000;
+    });
+    if (newlyDue.length) {
+      newlyDue.forEach(function (team) {
+        team.timer.startedAt = null;
+        team.timer.elapsedMs = team.timer.durationMinutes * 60000;
+        addHistory(team.name + ": Timer abgelaufen", team.id);
+      });
+      board.selectedTeamId = newlyDue[0].id;
+      signalTimerAlarm();
+      showToast(
+        newlyDue.length === 1
+          ? newlyDue[0].name + ": Timer abgelaufen"
+          : newlyDue.length + " Team-Timer abgelaufen",
+        4200
+      );
+      render();
+      persistSoon();
+      return;
+    }
+    updateTimerDom(now);
+  }
+
+  function readAsDataUrl(file) {
+    return new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve(reader.result); };
+      reader.onerror = function () { reject(reader.error || new Error("Lesefehler")); };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function loadImage(source) {
+    return new Promise(function (resolve, reject) {
+      var image = new Image();
+      image.onload = function () { resolve(image); };
+      image.onerror = function () { reject(new Error("Bild konnte nicht geöffnet werden")); };
+      image.src = source;
+    });
+  }
+
+  async function prepareBackground(file) {
+    if (!file || !file.type || file.type.indexOf("image/") !== 0) {
+      throw new Error("Bitte eine Bilddatei auswählen.");
+    }
+    if (file.type === "image/svg+xml") {
+      throw new Error("SVG wird nicht unterstützt. Bitte PNG oder JPG wählen.");
+    }
+    if (file.size > 30 * 1024 * 1024) {
+      throw new Error("Das Bild darf höchstens 30 MB groß sein.");
+    }
+    var source = await readAsDataUrl(file);
+    var image = await loadImage(source);
+    var maxDimension = 2600;
+    var scale = Math.min(1, maxDimension / Math.max(image.naturalWidth, image.naturalHeight));
+    if (scale === 1 && file.size <= 7 * 1024 * 1024 && safeImageData(source)) {
+      return source;
+    }
+    var canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(image.naturalWidth * scale));
+    canvas.height = Math.max(1, Math.round(image.naturalHeight * scale));
+    var context = canvas.getContext("2d");
+    if (!context) throw new Error("Bildverarbeitung ist nicht verfügbar.");
+    context.drawImage(image, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL("image/jpeg", 0.88);
+  }
+
+  async function uploadBackground(file) {
+    showToast("Geländeplan wird lokal vorbereitet …", 5000);
+    try {
+      var dataUrl = await prepareBackground(file);
+      board.backgroundDataUrl = dataUrl;
+      board.backgroundName = file.name || "Geländeplan";
+      addHistory("Geländeplan „" + board.backgroundName + "“ geladen");
+      render();
+      persistSoon();
+      showToast("Geländeplan lokal gespeichert");
+    } catch (error) {
+      showToast(error && error.message ? error.message : "Bild konnte nicht geladen werden.", 4200);
+    }
+  }
+
+  function exportBoard() {
+    var backup = {
+      app: "Teamlage Offline",
+      version: 2,
+      exportedAt: new Date().toISOString(),
+      state: board
+    };
+    var blob = new Blob([JSON.stringify(backup, null, 2)], {
+      type: "application/json"
+    });
+    var url = URL.createObjectURL(blob);
+    var anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = "teamlage-vollsicherung-"
+      + new Date().toISOString().slice(0, 10)
+      + ".json";
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    window.setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+    showToast("Vollsicherung inklusive Geländeplan exportiert");
+  }
+
+  async function importBoard(file) {
+    try {
+      var parsed = JSON.parse(await file.text());
+      var normalized = normalizeLoadedState(parsed);
+      if (!normalized) throw new Error("Ungültige Sicherung");
+      board = normalized;
+      addHistory("Sicherung eingespielt");
+      ui.editorOpen = false;
+      ui.historyOpen = false;
+      render();
+      persistSoon();
+      showToast("Sicherung erfolgreich eingespielt");
+    } catch (error) {
+      showToast("Diese Sicherung konnte nicht gelesen werden.", 4200);
+    }
+  }
+
+  root.addEventListener("click", function (event) {
+    var actionElement = event.target.closest("[data-action]");
+    if (!actionElement) return;
+    var action = actionElement.getAttribute("data-action");
+    var teamId = actionElement.getAttribute("data-team-id");
+
+    if (action === "close-modal") {
+      if (actionElement.classList.contains("modal-backdrop") && event.target !== actionElement) {
+        return;
+      }
+      ui.editorOpen = false;
+      ui.historyOpen = false;
+      render();
+      return;
+    }
+    if (Date.now() < suppressClickUntil && action === "select-team") return;
+
+    if (action === "add-team") createTeam();
+    if (action === "select-team" && findTeam(teamId)) {
+      board.selectedTeamId = teamId;
+      render();
+      persistSoon();
+    }
+    if (action === "open-editor" && findTeam(teamId)) {
+      board.selectedTeamId = teamId;
+      ui.editorOpen = true;
+      render();
+    }
+    if (action === "delete-team") removeTeam(teamId);
+    if (action === "set-color") {
+      var colorTeam = findTeam(teamId);
+      var color = actionElement.getAttribute("data-color");
+      if (colorTeam && safeColor(color, null)) {
+        colorTeam.color = color;
+        render();
+        persistSoon();
+      }
+    }
+    if (action === "set-status") {
+      var statusTeam = findTeam(teamId);
+      var status = actionElement.getAttribute("data-status");
+      if (statusTeam && STATUS_META[status]) {
+        statusTeam.status = status;
+        addHistory(statusTeam.name + ": " + STATUS_META[status].label, statusTeam.id);
+        render();
+        persistSoon();
+      }
+    }
+    if (action === "timer-start") startTeamTimer(teamId);
+    if (action === "timer-pause") pauseTeamTimer(teamId);
+    if (action === "timer-reset") resetTeamTimer(teamId);
+    if (action === "timer-mode") {
+      setTimerMode(teamId, actionElement.getAttribute("data-mode"));
+    }
+    if (action === "timer-duration") {
+      setTimerDuration(teamId, actionElement.getAttribute("data-minutes"));
+    }
+    if (action === "timer-warning") {
+      setTimerWarning(teamId, actionElement.getAttribute("data-minutes"));
+    }
+    if (action === "set-map-mode") {
+      var mode = actionElement.getAttribute("data-mode") === "live" ? "live" : "image";
+      if (mode !== board.mapMode) {
+        board.mapMode = mode;
+        addHistory(mode === "live" ? "Auf Live-Karte gewechselt" : "Auf eigenes Kartenbild gewechselt");
+        render();
+        persistSoon();
+      }
+    }
+    if (action === "use-my-location") useMyLocation();
+    if (action === "toggle-grid") {
+      board.showGrid = !board.showGrid;
+      render();
+      persistSoon();
+    }
+    if (action === "toggle-fit") {
+      board.mapFit = board.mapFit === "cover" ? "contain" : "cover";
+      render();
+      persistSoon();
+    }
+    if (action === "choose-background") {
+      var backgroundInput = document.getElementById("background-input");
+      if (backgroundInput) backgroundInput.click();
+    }
+    if (action === "remove-background") {
+      if (window.confirm("Geländeplan wirklich entfernen?")) {
+        board.backgroundDataUrl = null;
+        board.backgroundName = null;
+        addHistory("Geländeplan entfernt");
+        render();
+        persistSoon();
+      }
+    }
+    if (action === "export-board") exportBoard();
+    if (action === "choose-import") {
+      var importInput = document.getElementById("import-input");
+      if (importInput) importInput.click();
+    }
+    if (action === "toggle-focus") {
+      ui.focusMode = !ui.focusMode;
+      render();
+    }
+    if (action === "open-history") {
+      ui.historyOpen = true;
+      render();
+    }
+    if (action === "clear-history") {
+      board.history = [{
+        id: createId("log"),
+        teamId: null,
+        text: "Lageverlauf geleert",
+        time: Date.now()
+      }];
+      render();
+      persistSoon();
+    }
+  });
+
+  root.addEventListener("submit", function (event) {
+    var form = event.target.closest("[data-action='search-location-form']");
+    if (!form) return;
+    event.preventDefault();
+    var input = form.querySelector("[data-field='location-search']");
+    if (input) searchLiveLocation(input.value);
+  });
+
+  root.addEventListener("dblclick", function (event) {
+    var teamElement = event.target.closest("[data-team-id]");
+    if (!teamElement) return;
+    var teamId = teamElement.getAttribute("data-team-id");
+    if (!findTeam(teamId)) return;
+    board.selectedTeamId = teamId;
+    ui.editorOpen = true;
+    render();
+  });
+
+  root.addEventListener("input", function (event) {
+    var input = event.target;
+    var field = input.getAttribute && input.getAttribute("data-field");
+    if (!field) return;
+    var team = findTeam(input.getAttribute("data-team-id"));
+    if (field === "event-name") {
+      board.eventName = safeText(input.value, "", 120);
+      persistSoon();
+    }
+    if (field === "location-name") {
+      board.locationName = safeText(input.value, "", 160);
+      persistSoon();
+    }
+    if (field === "team-name" && team) {
+      team.name = safeText(input.value, "", 100);
+      persistSoon();
+    }
+    if (field === "team-code" && team) {
+      input.value = input.value.toUpperCase().slice(0, 3);
+      team.code = input.value;
+      persistSoon();
+    }
+    if (field === "team-members" && team) {
+      team.members = input.value.split("\n").map(function (name) {
+        return safeText(name, "", 100).trim();
+      }).filter(Boolean).slice(0, 50);
+      persistSoon();
+    }
+    if (field === "team-note" && team) {
+      team.note = safeText(input.value, "", 1000);
+      persistSoon();
+    }
+    if (field === "marker-scale" && team) {
+      team.markerScale = clamp(Number(input.value) || 1, 0.8, 1.8);
+      var scaleLabel = document.querySelector("[data-scale-label]");
+      if (scaleLabel) scaleLabel.textContent = Math.round(team.markerScale * 100) + " %";
+      var marker = Array.prototype.find.call(
+        document.querySelectorAll("[data-marker-team]"),
+        function (element) {
+          return element.getAttribute("data-marker-team") === team.id;
+        }
+      );
+      if (marker) {
+        marker.style.transform = "translate(-25px,-29px) scale(" + team.markerScale + ")";
+      }
+      persistSoon();
+    }
+  });
+
+  root.addEventListener("change", function (event) {
+    var input = event.target;
+    if (input.id === "background-input" && input.files && input.files[0]) {
+      uploadBackground(input.files[0]);
+      input.value = "";
+      return;
+    }
+    if (input.id === "import-input" && input.files && input.files[0]) {
+      importBoard(input.files[0]);
+      input.value = "";
+      return;
+    }
+    var field = input.getAttribute && input.getAttribute("data-field");
+    if (field === "timer-duration") {
+      setTimerDuration(input.getAttribute("data-team-id"), input.value);
+      return;
+    }
+    if (
+      field === "team-name"
+      || field === "team-code"
+      || field === "team-members"
+      || field === "team-note"
+      || field === "marker-scale"
+    ) {
+      render();
+    }
+  });
+
+  root.addEventListener("pointerdown", function (event) {
+    var marker = event.target.closest("[data-marker-team]");
+    var map = document.getElementById("map-canvas");
+    if (!marker || !map) return;
+    var teamId = marker.getAttribute("data-marker-team");
+    if (!findTeam(teamId)) return;
+    event.preventDefault();
+    marker.setPointerCapture(event.pointerId);
+    drag = {
+      marker: marker,
+      map: map,
+      teamId: teamId,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      moved: false
+    };
+  });
+
+  root.addEventListener("pointermove", function (event) {
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    var rect = drag.map.getBoundingClientRect();
+    var x = clamp(((event.clientX - rect.left) / rect.width) * 100, 3, 97);
+    var y = clamp(((event.clientY - rect.top) / rect.height) * 100, 4, 96);
+    if (
+      Math.abs(event.clientX - drag.startX) > 4
+      || Math.abs(event.clientY - drag.startY) > 4
+    ) {
+      drag.moved = true;
+    }
+    var team = findTeam(drag.teamId);
+    if (!team) return;
+    team.x = x;
+    team.y = y;
+    drag.marker.style.left = x + "%";
+    drag.marker.style.top = y + "%";
+    var timerBadge = drag.marker.querySelector(".marker-timer");
+    if (timerBadge) timerBadge.classList.toggle("align-left", x > 66);
+  });
+
+  function finishDrag(event) {
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    var team = findTeam(drag.teamId);
+    if (team) {
+      board.selectedTeamId = team.id;
+      if (drag.moved) {
+        team.movedAt = Date.now();
+        addHistory(team.name + " auf der Karte versetzt", team.id);
+        suppressClickUntil = Date.now() + 500;
+      }
+    }
+    drag = null;
+    render();
+    persistSoon();
+  }
+
+  root.addEventListener("pointerup", finishDrag);
+  root.addEventListener("pointercancel", finishDrag);
+
+  document.addEventListener("visibilitychange", function () {
+    if (!document.hidden) tick();
+  });
+  window.addEventListener("pagehide", function () {
+    if (hydrated) saveNow();
+  });
+
+  render();
+  loadSavedState();
+  window.setInterval(tick, 400);
+})();
+</script>
+<script>
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", function () {
+      navigator.serviceWorker.register("sw.js").catch(function () {
+        /* Läuft weiterhin normal, nur ohne Installierbarkeit/Precache. */
+      });
+    });
+  }
+</script>
+</body>
+</html>
